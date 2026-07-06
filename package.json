@@ -1,0 +1,35 @@
+{
+  "name": "pi-cross-agent-memory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Portable Pi extension that injects Claude Code and Codex memory indexes for the active project.",
+  "keywords": ["pi-package", "pi-extension", "memory", "claude", "codex"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run tests",
+    "prepare": "npm run build"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "npm:@fractaal/pi-coding-agent@0.80.2-fractal",
+    "@types/node": "22.19.19",
+    "typescript": "6.0.3",
+    "vitest": "^4.1.6"
+  }
+}
