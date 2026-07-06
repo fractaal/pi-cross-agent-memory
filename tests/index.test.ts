@@ -17,6 +17,10 @@ afterEach(async () => {
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+function isAlreadyExistsError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST';
+}
+
 function fakePi() {
   const handlers = new Map<string, Array<(event: any, ctx: any) => Promise<unknown> | unknown>>();
   const commands = new Map<string, (args: string, ctx: any) => Promise<unknown> | unknown>();
@@ -69,8 +73,12 @@ describe('resolveCrossAgentMemoryFiles', () => {
     const codexLower = join(home, '.codex', 'memories', 'MEMORY.md');
     const codexUpper = join(home, '.Codex', 'memories', 'MEMORY.md');
     await writeMemory(codexLower, 'Codex global memory.\n');
-    await mkdir(dirname(codexUpper), { recursive: true });
-    await symlink(codexLower, codexUpper);
+    try {
+      await mkdir(dirname(codexUpper), { recursive: true });
+      await symlink(codexLower, codexUpper);
+    } catch (error) {
+      if (!isAlreadyExistsError(error)) throw error;
+    }
 
     const files = await resolveCrossAgentMemoryFiles({ cwd, homeDir: home });
 
