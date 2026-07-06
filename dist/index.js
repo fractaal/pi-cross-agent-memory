@@ -47,6 +47,11 @@ export function createCrossAgentMemoryExtension(options = {}) {
     };
 }
 export default createCrossAgentMemoryExtension();
+export async function buildCrossAgentMemoryPromptAppend(options) {
+    const totalLimitBytes = positiveInteger(options.totalLimitBytes) ?? DEFAULT_TOTAL_LIMIT_BYTES;
+    const files = await resolveCrossAgentMemoryFiles(options);
+    return files.length > 0 ? buildCrossAgentMemoryBlock(files, totalLimitBytes) : '';
+}
 export async function resolveCrossAgentMemoryFiles(options) {
     const homeDir = options.homeDir ?? homedir();
     const fileLimitBytes = positiveInteger(options.fileLimitBytes) ?? DEFAULT_FILE_LIMIT_BYTES;

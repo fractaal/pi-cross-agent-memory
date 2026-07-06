@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import crossAgentMemory, { createCrossAgentMemoryExtension, projectMemorySlug, resolveCrossAgentMemoryFiles } from '../src/index.js';
+import crossAgentMemory, { buildCrossAgentMemoryPromptAppend, createCrossAgentMemoryExtension, projectMemorySlug, resolveCrossAgentMemoryFiles } from '../src/index.js';
 
 const tempRoots: string[] = [];
 
@@ -83,6 +83,20 @@ describe('resolveCrossAgentMemoryFiles', () => {
     const files = await resolveCrossAgentMemoryFiles({ cwd, homeDir: home });
 
     expect(files.map((file) => file.path)).toEqual([codexLower]);
+  });
+
+  it('builds a prompt append block for hosts that cannot rely on before_agent_start', async () => {
+    const home = await tempRoot();
+    const cwd = join(home, 'Projects', 'demo');
+    await mkdir(cwd, { recursive: true });
+    const claudeMemory = join(home, '.claude', 'projects', projectMemorySlug(cwd), 'memory', 'MEMORY.md');
+    await writeMemory(claudeMemory, 'Claude host prompt memory.\n');
+
+    const promptAppend = await buildCrossAgentMemoryPromptAppend({ cwd, homeDir: home });
+
+    expect(promptAppend).toContain('# cross-agent memory');
+    expect(promptAppend).toContain('Claude host prompt memory.');
+    expect(promptAppend).toContain(claudeMemory);
   });
 
   it('skips directory matches and respects file and total byte budgets', async () => {

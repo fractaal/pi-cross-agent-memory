@@ -24,8 +24,11 @@ export interface CrossAgentMemoryExtensionOptions {
     totalLimitBytes?: number;
     notifyOnSessionStart?: boolean;
 }
+export interface BuildCrossAgentMemoryPromptAppendOptions extends ResolveCrossAgentMemoryFilesOptions {
+}
 export declare function createCrossAgentMemoryExtension(options?: CrossAgentMemoryExtensionOptions): (pi: ExtensionAPI) => void;
 declare const _default: (pi: ExtensionAPI) => void;
 export default _default;
+export declare function buildCrossAgentMemoryPromptAppend(options: BuildCrossAgentMemoryPromptAppendOptions): Promise<string>;
 export declare function resolveCrossAgentMemoryFiles(options: ResolveCrossAgentMemoryFilesOptions): Promise<CrossAgentMemoryFile[]>;
 export declare function projectMemorySlug(directory: string, pathSeparator?: typeof sep): string;

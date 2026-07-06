@@ -38,6 +38,8 @@ export interface CrossAgentMemoryExtensionOptions {
   notifyOnSessionStart?: boolean;
 }
 
+export interface BuildCrossAgentMemoryPromptAppendOptions extends ResolveCrossAgentMemoryFilesOptions {}
+
 export function createCrossAgentMemoryExtension(options: CrossAgentMemoryExtensionOptions = {}) {
   const homeDir = options.homeDir ?? homedir();
   const fileLimitBytes = positiveInteger(options.fileLimitBytes) ?? DEFAULT_FILE_LIMIT_BYTES;
@@ -88,6 +90,12 @@ export function createCrossAgentMemoryExtension(options: CrossAgentMemoryExtensi
 }
 
 export default createCrossAgentMemoryExtension();
+
+export async function buildCrossAgentMemoryPromptAppend(options: BuildCrossAgentMemoryPromptAppendOptions): Promise<string> {
+  const totalLimitBytes = positiveInteger(options.totalLimitBytes) ?? DEFAULT_TOTAL_LIMIT_BYTES;
+  const files = await resolveCrossAgentMemoryFiles(options);
+  return files.length > 0 ? buildCrossAgentMemoryBlock(files, totalLimitBytes) : '';
+}
 
 export async function resolveCrossAgentMemoryFiles(options: ResolveCrossAgentMemoryFilesOptions): Promise<CrossAgentMemoryFile[]> {
   const homeDir = options.homeDir ?? homedir();
