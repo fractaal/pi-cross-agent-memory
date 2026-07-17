@@ -2,7 +2,7 @@
   "name": "@fractaal/pi-cross-agent-memory",
   "version": "0.2.0",
   "type": "module",
-  "description": "Portable Pi extension that injects Claude Code and Codex memory indexes for the active project.",
+  "description": "Portable Pi extension that injects Claude Code and Codex memory indexes for projects encountered during a Pi session.",
   "keywords": ["pi-package", "pi-extension", "memory", "claude", "codex"],
   "license": "MIT",
   "repository": {

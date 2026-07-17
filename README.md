@@ -1,6 +1,6 @@
 # @fractaal/pi-cross-agent-memory
 
-Portable Pi extension that injects local Claude Code and Codex memory indexes for the active cwd.
+Portable Pi extension that injects local Claude Code and Codex memory indexes for projects encountered during a Pi session.
 
 This package is also the **reference implementation** for how fractaal Pi extensions are published — see [Publishing a Pi extension properly](#publishing-a-pi-extension-properly).
 
@@ -17,6 +17,8 @@ This package is also the **reference implementation** for how fractaal Pi extens
   - `~/.Codex/memories/MEMORY.md`
 
 It also considers the git common worktree root, so a task worktree can still pick up memory saved against the main checkout root.
+
+At session start, memory is resolved from the active cwd. Successful path-aware `read`, `grep`, `find`, `ls`, `write`, and `edit` results also discover memory for newly encountered projects. Newly discovered memory is surfaced in that tool result for the next model turn, retained for later prompts, and restored when the session reloads or resumes. The active cwd remains first within the total context budget on later prompts. Memory is advisory recall, so writes are never blocked while it loads.
 
 ## Pi usage
 
@@ -42,7 +44,7 @@ Pi loads the extension through the `pi.extensions` manifest entry, which points 
 
 ## Commands
 
-- `/cross-agent-memory` shows which memory files are currently injected.
+- `/cross-agent-memory` shows which memory files are currently injected for the session.
 - `/claude-memory` is kept as a compatibility alias for Ben's old personal extension command.
 
 ## Embedding

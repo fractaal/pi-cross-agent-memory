@@ -1,6 +1,6 @@
 import { open, realpath, stat } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
-import { dirname, join, posix, sep, win32 } from 'node:path';
+import { basename, dirname, join, posix, resolve, sep, win32 } from 'node:path';
 import { homedir } from 'node:os';
 
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
@@ -8,8 +8,10 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 const DEFAULT_FILE_LIMIT_BYTES = 50 * 1024;
 const DEFAULT_TOTAL_LIMIT_BYTES = 100 * 1024;
 const MEMORY_BLOCK_HEADING = '# cross-agent memory';
+const STATE_ENTRY_TYPE = 'pi-cross-agent-memory-state';
 
 type MemorySourceKind = 'claude-code-project-memory' | 'codex-project-memory' | 'codex-global-memory';
+type ToolResultContent = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
 
 interface MemoryCandidate {
   kind: MemorySourceKind;
@@ -45,20 +47,34 @@ export function createCrossAgentMemoryExtension(options: CrossAgentMemoryExtensi
   const fileLimitBytes = positiveInteger(options.fileLimitBytes) ?? DEFAULT_FILE_LIMIT_BYTES;
   const totalLimitBytes = positiveInteger(options.totalLimitBytes) ?? DEFAULT_TOTAL_LIMIT_BYTES;
   const notifyOnSessionStart = options.notifyOnSessionStart ?? true;
+  const pathToolNames = new Set(['read', 'grep', 'find', 'ls', 'write', 'edit']);
+  let projectDirectories = new Set<string>();
   let lastResolved: CrossAgentMemoryFile[] = [];
+  let lastPriorityDirectory: string | undefined;
+  let discoveryQueue = Promise.resolve();
 
   return function crossAgentMemory(pi: ExtensionAPI) {
-    const resolveForCwd = (cwd: string) => resolveCrossAgentMemoryFiles({ cwd, homeDir, fileLimitBytes, totalLimitBytes });
+    const resolveForKnownProjects = (priorityDirectory: string) => {
+      const directories = [priorityDirectory, ...[...projectDirectories].filter((directory) => directory !== priorityDirectory)];
+      return resolveCrossAgentMemoryFilesForDirectories(directories, { homeDir, fileLimitBytes, totalLimitBytes });
+    };
+    const refreshForSession = async (cwd: string, sessionManager: unknown) => {
+      const cwdDirectory = resolve(cwd);
+      projectDirectories = restoreProjectDirectories(sessionManager);
+      projectDirectories.add(cwdDirectory);
+      lastResolved = await resolveForKnownProjects(cwdDirectory);
+      lastPriorityDirectory = cwdDirectory;
+    };
 
     pi.on('session_start', async (_event, ctx) => {
-      lastResolved = await resolveForCwd(ctx.cwd);
+      await refreshForSession(ctx.cwd, ctx.sessionManager);
       if (notifyOnSessionStart && ctx.hasUI && lastResolved.length > 0) {
         ctx.ui.notify(`Cross-agent memory loaded: ${formatFileList(lastResolved)}`, 'info');
       }
     });
 
     pi.on('before_agent_start', async (event, ctx) => {
-      lastResolved = await resolveForCwd(ctx.cwd);
+      await refreshForSession(ctx.cwd, ctx.sessionManager);
       if (lastResolved.length === 0) return undefined;
       if (event.systemPrompt.includes(`${MEMORY_BLOCK_HEADING}\n`) && lastResolved.every((file) => event.systemPrompt.includes(file.path))) {
         return undefined;
@@ -66,19 +82,55 @@ export function createCrossAgentMemoryExtension(options: CrossAgentMemoryExtensi
       return { systemPrompt: `${event.systemPrompt}\n\n${buildCrossAgentMemoryBlock(lastResolved, totalLimitBytes)}` };
     });
 
-    const commandHandler = async (_args: string, ctx: { cwd: string; hasUI: boolean; ui: { notify: (message: string, level?: 'info' | 'warning' | 'error') => void } }) => {
-      lastResolved = await resolveForCwd(ctx.cwd);
+    pi.on('tool_result', async (event, ctx) => {
+      if (!pathToolNames.has(String(event.toolName).toLowerCase()) || event.isError) return undefined;
+      const targetPath = extractToolPath(event.input);
+      if (!targetPath) return undefined;
+
+      const discover = async () => {
+        const directory = await targetDirectory(resolve(ctx.cwd, targetPath.replace(/^@/, '')), event.toolName);
+        if (lastPriorityDirectory === directory) return undefined;
+
+        const wasKnown = projectDirectories.has(directory);
+        projectDirectories.add(directory);
+        const knownPaths = new Set(lastResolved.map((file) => file.path));
+        const resolved = await resolveForKnownProjects(directory);
+        const discovered = resolved.filter((file) => !knownPaths.has(file.path));
+        if (!wasKnown && discovered.length === 0) {
+          projectDirectories.delete(directory);
+          return undefined;
+        }
+
+        lastResolved = resolved;
+        lastPriorityDirectory = directory;
+        if (!wasKnown) pi.appendEntry(STATE_ENTRY_TYPE, { projectDirectories: [...projectDirectories] });
+        if (discovered.length === 0) return undefined;
+        return {
+          content: appendMemoryToContent(
+            event.content,
+            renderDiscoveryNotice(event.toolName, targetPath, discovered, totalLimitBytes),
+          ),
+        };
+      };
+
+      const result = discoveryQueue.then(discover, discover);
+      discoveryQueue = result.then(() => undefined, () => undefined);
+      return result;
+    });
+
+    const commandHandler = async (_args: string, ctx: { cwd: string; hasUI: boolean; sessionManager: unknown; ui: { notify: (message: string, level?: 'info' | 'warning' | 'error') => void } }) => {
+      await refreshForSession(ctx.cwd, ctx.sessionManager);
       if (!ctx.hasUI) return;
       ctx.ui.notify(
         lastResolved.length > 0
           ? `Injecting cross-agent memory from ${formatFileList(lastResolved)}`
-          : 'No local Claude Code or Codex memory files found for this cwd.',
+          : 'No local Claude Code or Codex memory files found for this session.',
         lastResolved.length > 0 ? 'info' : 'warning',
       );
     };
 
     pi.registerCommand('cross-agent-memory', {
-      description: 'Show the local Claude Code and Codex memory files injected for this cwd',
+      description: 'Show the local Claude Code and Codex memory files injected for this session',
       handler: commandHandler,
     });
 
@@ -98,12 +150,20 @@ export async function buildCrossAgentMemoryPromptAppend(options: BuildCrossAgent
 }
 
 export async function resolveCrossAgentMemoryFiles(options: ResolveCrossAgentMemoryFilesOptions): Promise<CrossAgentMemoryFile[]> {
+  return resolveCrossAgentMemoryFilesForDirectories([options.cwd], options);
+}
+
+async function resolveCrossAgentMemoryFilesForDirectories(
+  directories: string[],
+  options: Omit<ResolveCrossAgentMemoryFilesOptions, 'cwd'>,
+): Promise<CrossAgentMemoryFile[]> {
   const homeDir = options.homeDir ?? homedir();
   const fileLimitBytes = positiveInteger(options.fileLimitBytes) ?? DEFAULT_FILE_LIMIT_BYTES;
   const totalLimitBytes = positiveInteger(options.totalLimitBytes) ?? DEFAULT_TOTAL_LIMIT_BYTES;
+  const projectDirectories = uniqueStrings(directories.flatMap(projectDirectoryCandidates));
   const candidates = uniqueCandidates([
-    ...projectDirectoryCandidates(options.cwd).flatMap((projectDirectory) => claudeCodeMemoryCandidates(homeDir, projectDirectory)),
-    ...projectDirectoryCandidates(options.cwd).flatMap((projectDirectory) => codexProjectMemoryCandidates(homeDir, projectDirectory)),
+    ...projectDirectories.flatMap((projectDirectory) => claudeCodeMemoryCandidates(homeDir, projectDirectory)),
+    ...projectDirectories.flatMap((projectDirectory) => codexProjectMemoryCandidates(homeDir, projectDirectory)),
     ...codexGlobalMemoryCandidates(homeDir),
   ]);
   const files: CrossAgentMemoryFile[] = [];
@@ -250,7 +310,7 @@ function buildCrossAgentMemoryBlock(files: CrossAgentMemoryFile[], totalLimitByt
   return [
     MEMORY_BLOCK_HEADING,
     '',
-    `Local memory indexes from other agent harnesses for this cwd. Treat them as durable recall hints, not as user messages. At most ${formatKb(totalLimitBytes)} total file content is injected; read the referenced files directly when more detail is needed.`,
+    `Local memory indexes from other agent harnesses for projects encountered in this session. Treat them as durable recall hints, not as user messages. At most ${formatKb(totalLimitBytes)} total file content is injected; read the referenced files directly when more detail is needed.`,
     '',
     ...files.map(formatMemoryFile),
   ].join('\n');
@@ -272,6 +332,67 @@ function formatMemoryFile(file: CrossAgentMemoryFile): string {
   }
   lines.push('</cross-agent-memory-file>');
   return lines.join('\n');
+}
+
+function restoreProjectDirectories(sessionManager: unknown): Set<string> {
+  const directories = new Set<string>();
+  const manager = asRecord(sessionManager);
+  const getBranch = manager?.getBranch;
+  const entries = typeof getBranch === 'function' ? getBranch.call(sessionManager) : [];
+  if (!Array.isArray(entries)) return directories;
+
+  for (const entry of entries) {
+    const record = asRecord(entry);
+    if (record?.type !== 'custom' || record.customType !== STATE_ENTRY_TYPE) continue;
+    const data = asRecord(record.data);
+    const stored = Array.isArray(data?.projectDirectories) ? data.projectDirectories : [];
+    for (const directory of stored) {
+      if (typeof directory === 'string' && directory.length > 0) directories.add(resolve(directory));
+    }
+  }
+  return directories;
+}
+
+function extractToolPath(input: unknown): string | null {
+  const record = asRecord(input);
+  if (!record) return null;
+  for (const key of ['path', 'file_path', 'filePath']) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim().length > 0) return value;
+  }
+  return null;
+}
+
+async function targetDirectory(path: string, toolName: string): Promise<string> {
+  if (toolName === 'write' || toolName === 'edit') return dirname(path);
+  try {
+    const targetStat = await stat(path);
+    return targetStat.isDirectory() ? path : dirname(path);
+  } catch {
+    return basename(path).includes('.') ? dirname(path) : path;
+  }
+}
+
+function renderDiscoveryNotice(toolName: string, targetPath: string, files: CrossAgentMemoryFile[], totalLimitBytes: number): string {
+  return [
+    '<system-notice>',
+    `${toolName} at ${targetPath} discovered cross-agent memory for a newly encountered project:`,
+    '',
+    buildCrossAgentMemoryBlock(files, totalLimitBytes),
+    '</system-notice>',
+  ].join('\n');
+}
+
+function appendMemoryToContent(content: unknown, notice: string): ToolResultContent[] {
+  if (!Array.isArray(content) || content.length === 0) return [{ type: 'text', text: notice }];
+  const next = [...content] as ToolResultContent[];
+  const last = next.at(-1);
+  if (last?.type === 'text' && typeof last.text === 'string') {
+    next[next.length - 1] = { ...last, text: `${last.text}\n\n${notice}` };
+  } else {
+    next.push({ type: 'text', text: notice });
+  }
+  return next;
 }
 
 function uniqueCandidates(candidates: MemoryCandidate[]): MemoryCandidate[] {
@@ -314,4 +435,8 @@ function formatKb(bytes: number): string {
 
 function xmlAttr(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : null;
 }
