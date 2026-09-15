@@ -1,8 +1,10 @@
 # @fractaal/pi-cross-agent-memory
 
+> **Source moved:** current development and releases live in [fractaal/pi-extensions/packages/cross-agent-memory](https://github.com/fractaal/pi-extensions/tree/main/packages/cross-agent-memory). Version **0.3.1** is the first verified monorepo release; the npm package name and runtime API are unchanged. This repository and its historical refs remain available, but do not publish new versions from here.
+
 Portable Pi extension that injects local Claude Code and Codex memory indexes for projects encountered during a Pi session.
 
-This package is also the **reference implementation** for how fractaal Pi extensions are published — see [Publishing a Pi extension properly](#publishing-a-pi-extension-properly).
+The authoritative packaging and GitHub OIDC release instructions are now in the [monorepo release guide](https://github.com/fractaal/pi-extensions/blob/main/docs/releasing.md).
 
 ## What it loads
 
@@ -61,7 +63,7 @@ This import resolves to compiled JS in `dist/` via the package `exports` map —
 
 ## Publishing a Pi extension properly
 
-The pattern this package follows, and every fractaal Pi extension should copy:
+Historical packaging notes for this package (the shared guide above owns current conventions):
 
 1. **Two entry doors, one implementation.**
    - `pi.extensions` in `package.json` points at the TypeScript source (`./src/index.ts`). Pi's own loader consumes this — it compiles TS itself. This is the standard Pi-ecosystem door.
@@ -71,11 +73,4 @@ The pattern this package follows, and every fractaal Pi extension should copy:
 4. **Published to npm under `@fractaal`**, `publishConfig.access: public`. Consumers pin ordinary semver versions. No git-SHA tarball URLs, no vendored build artifacts, no path-resolving `.ts` files out of `node_modules` at runtime.
 5. **Runtime imports stay lean.** The Pi API is imported type-only (`import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'`), so the compiled output has no hard runtime dependency on the harness — it is declared as a peer.
 
-Release flow:
-
-```bash
-npm run typecheck && npm test
-npm version minor        # or patch/major
-npm publish              # prepack builds dist/ automatically
-git push --follow-tags
-```
+New releases use GitHub OIDC from the monorepo only. See the [shared release guide](https://github.com/fractaal/pi-extensions/blob/main/docs/releasing.md); do not run a local publication from this historical repository.
